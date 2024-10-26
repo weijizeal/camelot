@@ -3,7 +3,7 @@
 import os
 import sys
 
-from PyPDF2 import PdfFileReader, PdfFileWriter
+from PyPDF2 import PdfReader, PdfWriter
 
 from .core import TableList
 from .parsers import Stream, Lattice
@@ -15,7 +15,9 @@ from .utils import (
     is_url,
     download_url,
 )
-
+import pandas as pd
+import re 
+PAGE_HEIGHT = 842
 
 class PDFHandler(object):
     """Handles all operations like temp directory creation, splitting
@@ -70,11 +72,12 @@ class PDFHandler(object):
         if pages == "1":
             page_numbers.append({"start": 1, "end": 1})
         else:
-            infile = PdfFileReader(open(filepath, "rb"), strict=False)
-            if infile.isEncrypted:
+            instream = open(filepath, "rb")
+            infile = PdfReader(instream, strict=False)
+            if infile.is_encrypted:
                 infile.decrypt(self.password)
             if pages == "all":
-                page_numbers.append({"start": 1, "end": infile.getNumPages()})
+                page_numbers.append({"start": 1, "end": len(infile.pages)})
             else:
                 for r in pages.split(","):
                     if "-" in r:
@@ -84,6 +87,7 @@ class PDFHandler(object):
                         page_numbers.append({"start": int(a), "end": int(b)})
                     else:
                         page_numbers.append({"start": int(r), "end": int(r)})
+            instream.close()
         P = []
         for p in page_numbers:
             P.extend(range(p["start"], p["end"] + 1))
@@ -103,14 +107,14 @@ class PDFHandler(object):
 
         """
         with open(filepath, "rb") as fileobj:
-            infile = PdfFileReader(fileobj, strict=False)
-            if infile.isEncrypted:
+            infile = PdfReader(fileobj, strict=False)
+            if infile.is_encrypted:
                 infile.decrypt(self.password)
-            fpath = os.path.join(temp, "page-{0}.pdf".format(page))
+            fpath = os.path.join(temp, f"page-{page}.pdf")
             froot, fext = os.path.splitext(fpath)
-            p = infile.getPage(page - 1)
-            outfile = PdfFileWriter()
-            outfile.addPage(p)
+            p = infile.pages[page - 1]
+            outfile = PdfWriter()
+            outfile.add_page(p)
             with open(fpath, "wb") as f:
                 outfile.write(f)
             layout, dim = get_page_layout(fpath)
@@ -122,18 +126,53 @@ class PDFHandler(object):
             if rotation != "":
                 fpath_new = "".join([froot.replace("page", "p"), "_rotated", fext])
                 os.rename(fpath, fpath_new)
-                infile = PdfFileReader(open(fpath_new, "rb"), strict=False)
-                if infile.isEncrypted:
+                instream = open(fpath_new, "rb")
+                infile = PdfReader(instream, strict=False)
+                if infile.is_encrypted:
                     infile.decrypt(self.password)
-                outfile = PdfFileWriter()
+                outfile = PdfWriter()
                 p = infile.getPage(0)
                 if rotation == "anticlockwise":
                     p.rotateClockwise(90)
                 elif rotation == "clockwise":
                     p.rotateCounterClockwise(90)
-                outfile.addPage(p)
+                outfile.add_page(p)
                 with open(fpath, "wb") as f:
                     outfile.write(f)
+                instream.close()
+
+    #      (0, 842)  -------------------->  (595.2, 842)  
+    #     |                                      |
+    #     |                                      |
+    #     |                                      |
+    #     |                                      |
+    #  (0, 0)  -----------------------> (595.2, 0)  
+    
+    # 需要注意的是上一个页面的底部到当前页面的顶部，如果这个距离小于一个阈值，那么这两个表格应该合并。
+    # 1.计算出顶部和底部空白所占的比例 如 顶部 77/871 底部 84/871
+    # 2.计算出顶部y轴和底部y轴的坐标范围 如 顶部842 - 842 * 77/871 = 767 底部 842 * 84/871 = 81
+    # 3.顶部可以下移，底部可以上移，将顶部数字变小，底部数字变大 如 顶部 767 - 17 = 750 底部 81 + 10 = 91
+    # 4.得出顶部和顶部的y的范围 如 pre_y <= 91 和 底部 cur_y >= 757
+
+    def check_need_merge(self,pre_table, cur_table, **kwargs):
+        pre_bbox = pre_table._bbox
+        cur_table_bbox = cur_table._bbox
+        
+        pre_y_bottom = pre_bbox[1]
+        cur_y_top = cur_table_bbox[3]
+        # 打印这些值
+        print(f"pre_y_bottom: {pre_y_bottom}")
+        print(f"cur_y_top: {cur_y_top}")
+        
+        bottom_threshold = kwargs.get('bottom_threshold', 100)
+        top_threshold = PAGE_HEIGHT - kwargs.get('top_threshold', 90)
+        print(f"bottom_threshold: {bottom_threshold}")
+        print(f"top_threshold: {top_threshold}")
+        
+        if pre_y_bottom <= bottom_threshold and cur_y_top >= top_threshold:
+            return True
+        else:
+            return False
 
     def parse(
         self, flavor="lattice", suppress_stdout=False, layout_kwargs={}, **kwargs
@@ -163,13 +202,36 @@ class PDFHandler(object):
         with TemporaryDirectory() as tempdir:
             for p in self.pages:
                 self._save_page(self.filepath, p, tempdir)
-            pages = [
-                os.path.join(tempdir, "page-{0}.pdf".format(p)) for p in self.pages
-            ]
+            pages = [os.path.join(tempdir, f"page-{p}.pdf") for p in self.pages]
             parser = Lattice(**kwargs) if flavor == "lattice" else Stream(**kwargs)
+            
+            pre_table=None
+            last_table=None
             for p in pages:
+                if len(tables) > 0:
+                    last_table = tables[-1]
+                    
                 t = parser.extract_tables(
                     p, suppress_stdout=suppress_stdout, layout_kwargs=layout_kwargs
                 )
                 tables.extend(t)
+                if len(t) <= 0:
+                    continue
+                
+                current_table = t[0]
+                if pre_table:
+                    if pre_table.df.shape[1] == current_table.df.shape[1]:
+                        self.merge_cross_table(tables, pre_table, last_table, current_table, **kwargs)
+                        
+                pre_table = t[-1]
+
         return TableList(sorted(tables))
+
+    def merge_cross_table(self, tables, pre_table, last_table, current_table, **kwargs):
+        need_merge = self.check_need_merge(pre_table, current_table, **kwargs)
+        if need_merge == True: # 合并表格
+            tables.remove(current_table)
+            for i in range(len(tables)):
+                if tables[i] == last_table:
+                    tables[i].df = pd.concat([last_table.df, current_table.df])
+                    break

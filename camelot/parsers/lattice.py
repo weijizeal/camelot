@@ -11,6 +11,8 @@ import subprocess
 
 import numpy as np
 import pandas as pd
+import math
+import cv2
 
 from .base import BaseParser
 from ..core import Table
@@ -100,7 +102,7 @@ class Lattice(BaseParser):
         table_regions=None,
         table_areas=None,
         process_background=False,
-        line_scale=15,
+        line_scale=30,
         copy_text=None,
         shift_text=["l", "t"],
         split_text=False,
@@ -249,7 +251,8 @@ class Lattice(BaseParser):
         pdf_height_scaler = self.pdf_height / float(image_height)
         image_scalers = (image_width_scaler, image_height_scaler, self.pdf_height)
         pdf_scalers = (pdf_width_scaler, pdf_height_scaler, image_height)
-
+    
+        
         if self.table_areas is None:
             regions = None
             if self.table_regions is not None:
