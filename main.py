@@ -17,30 +17,6 @@ for i, table in enumerate(tables):
     print(f"Shape: {table.shape}")
     print(f"Parsing Report: {table.parsing_report}")
     print(table.df)  # 打印表格的内容
+    print(table._bbox)  # 打印表格的边界框
+    
 tables.export("tmp_csv")
-# # 初始化合并表格的存储容器
-# merged_tables = []
-# current_table = tables[0].df  # 将第一个表格作为初始表
-
-# # 遍历并检查表格是否需要合并
-# for i in range(1, len(tables)):
-#     table = tables[i].df
-
-#     # 调用大模型API判断是否需要合并
-#     need_merge = check_need_merge(current_table.head().to_string(), table.head().to_string())
-
-#     if need_merge:
-#         # 如果需要合并，则将表格拼接
-#         current_table = pd.concat([current_table, table.iloc[1:]], ignore_index=True)
-#     else:
-#         # 保存当前表格，并开始新的合并表
-#         merged_tables.append(current_table)
-#         current_table = table
-
-# # 保存最后一个表格
-# merged_tables.append(current_table)
-
-# # 打印合并后的表格信息
-# for idx, merged_table in enumerate(merged_tables):
-#     print(f"\nMerged Table {idx + 1}:")
-#     print(merged_table)
