@@ -13,6 +13,7 @@ import numpy as np
 import pandas as pd
 import math
 import cv2
+import fitz
 
 from .base import BaseParser
 from ..core import Table
@@ -210,18 +211,15 @@ class Lattice(BaseParser):
                                 t.cells[i][j].text = t.cells[i - 1][j].text
         return t
 
-    def _generate_image(self):
-        from ..ext.ghostscript import Ghostscript
-
+    def _generate_image(self, dpi=300):
+        doc = fitz.open(self.filename)
+        page = doc.load_page(0)  # 加载第一页
+        zoom = dpi / 72  # 计算缩放比例
+        mat = fitz.Matrix(zoom, zoom)  # 创建缩放矩阵
+        pix = page.get_pixmap(matrix=mat, colorspace=fitz.csRGB)  # 生成像素图
         self.imagename = "".join([self.rootname, ".png"])
-        gs_call = "-q -sDEVICE=png16m -o {} -r300 {}".format(
-            self.imagename, self.filename
-        )
-        gs_call = gs_call.encode().split()
-        null = open(os.devnull, "wb")
-        with Ghostscript(*gs_call, stdout=null) as gs:
-            pass
-        null.close()
+        pix.save(self.imagename)
+
 
     def _generate_table_bbox(self):
         def scale_areas(areas):

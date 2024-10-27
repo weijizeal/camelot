@@ -336,6 +336,7 @@ class Table(object):
         Table number on PDF page.
     page : int
         PDF page number.
+    title : string
 
     """
 
@@ -349,6 +350,7 @@ class Table(object):
         self.whitespace = 0
         self.order = None
         self.page = None
+        self.title = None
 
     def __repr__(self):
         return "<{} shape={}>".format(self.__class__.__name__, self.shape)
@@ -380,6 +382,7 @@ class Table(object):
             "whitespace": round(self.whitespace, 2),
             "order": self.order,
             "page": self.page,
+            "title": self.title,
         }
         return report
 
