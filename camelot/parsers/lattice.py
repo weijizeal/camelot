@@ -103,7 +103,7 @@ class Lattice(BaseParser):
         table_regions=None,
         table_areas=None,
         process_background=False,
-        line_scale=30,
+        line_scale=70,
         copy_text=None,
         shift_text=["l", "t"],
         split_text=False,

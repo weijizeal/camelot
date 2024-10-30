@@ -2,7 +2,7 @@
 
 import os
 import sys
-
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from PyPDF2 import PdfReader, PdfWriter
 
 from .core import TableList
@@ -210,7 +210,6 @@ class PDFHandler(object):
             last_table=None
             
             page_tb_list_list = [] 
-            bottom_threshold = kwargs.get('bottom_threshold', 100)
             for idx,p in enumerate(pages):
                 is_frist_table_merge = False
                 cur_page_table_list = [] # 当前
@@ -228,8 +227,9 @@ class PDFHandler(object):
                 
                 current_table = t[0]
                 if pre_table:
-                    if pre_table.df.shape[1] == current_table.df.shape[1]:
-                        is_frist_table_merge =  self.merge_cross_table(p,tables, pre_table, last_table, current_table, **kwargs)
+                    # 满足条件直接合并表格
+                    # if pre_table.df.shape[1] == current_table.df.shape[1]:
+                    is_frist_table_merge =  self.merge_cross_table(p,tables, pre_table, last_table, current_table, **kwargs)
                 pre_table = t[-1]
                 self.set_title_for_table(kwargs, p, pages, page_tb_list_list, idx, is_frist_table_merge, t)
                     
@@ -243,17 +243,17 @@ class PDFHandler(object):
                         # 判断上一页有没有表格，如果有那么获取它的页面底部y坐标否则0
                 pre_table_bottom_y = page_tb_list_list[idx-1][-1]._bbox[1] if len(page_tb_list_list[idx-1]) > 0 else 0
                         # 当前表格顶部归零，即从上一页底部网上找，找到距离最近的标题，但是不超过上一页最后一个表的底部y坐标 10回调值
-                t[0].title = self.find_table_title(0, pages[idx-1],pre_table_bottom_y)
+                t[0].title = self.find_table_title(0, pages[idx-1],pre_table_bottom_y,kwargs)
             else:
                         # 在当表格y坐标网上找，找到距离最近的标题 当前表格顶部y t[0]._bbox[3] 找到空白部分之下 10是回调值
-                t[0].title = self.find_table_title(t[0]._bbox[3], p,page_height)
+                t[0].title = self.find_table_title(t[0]._bbox[3], p,page_height,kwargs)
                     
         if len(t) > 1:
                     # 当前也页面之后的每个表的标题，在上个表格底部之下的区域寻找
             for i in range(1, len(t)):
                 pre_table_bottom_y = t[i-1]._bbox[1]
                         # 当前表格顶部坐标 t[i]._bbox[3]之上，上个表格底部坐标之下
-                t[i].title = self.find_table_title(t[i]._bbox[3], p,pre_table_bottom_y)
+                t[i].title = self.find_table_title(t[i]._bbox[3], p,pre_table_bottom_y,kwargs)
 
     def _generate_layout(self, filename):
         layout, dimensions = get_page_layout(filename)
@@ -262,9 +262,10 @@ class PDFHandler(object):
         return horizontal_text, vertical_text
 
     
-    def find_table_title(self, self_table_top_y, page, pre_table_bottom_y):
+    def find_table_title(self, self_table_top_y, page, pre_table_bottom_y,kwargs):
+        number_of_hearder_rows = int(kwargs.get("number_of_hearder_rows", 5))
+        # print("number_of_hearder_rows",number_of_hearder_rows)
         h_txt,v_txt = self._generate_layout(page)
-        pre_table_bottom_y = self_table_top_y + 150 if pre_table_bottom_y == 0 else pre_table_bottom_y
         
         distance_list = []
         for obj in h_txt:
@@ -273,7 +274,7 @@ class PDFHandler(object):
                 distance_list.append((obj, distance))
                 
         distance_list = sorted(distance_list, key=lambda x: x[1])
-        closest_titles = distance_list[:4]
+        closest_titles = distance_list[:number_of_hearder_rows]
         closest_titles.reverse()
         title_arr = [obj[0].get_text().strip() for obj in closest_titles]
         title = " ".join(title_arr)

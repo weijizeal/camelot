@@ -17,3 +17,8 @@ htmlcov/
 
 # vscode
 .vscode
+
+output_tables/
+excel_outputs/
+pdfs/
+output_test/

@@ -96,7 +96,8 @@ def read_pdf(
     bottom_threshold* : int, optional (default: 100),
     top_threshold* : int, optional (default: 90)
         It is the upper and lower threshold of the table page, used to determine the boundaries of the table. The calculation method is: take a screenshot to calculate the proportion of blank space occupied, multiply this proportion by the height of the page 842, and enlarge this value to serve as a marker for the table to reach the bottom and top of the page, used to calculate the cross page table. There are certain limitations. The default values are 100 and 90
-
+    number_of_hearder_rows* : int, optional (default: 5)
+        The number of header rows of the table. The default value is 5.
     Returns
     -------
     tables : camelot.core.TableList
