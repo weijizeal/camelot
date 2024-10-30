@@ -174,66 +174,120 @@ class PDFHandler(object):
         layout, dimensions = get_page_layout(p)
         pdf_width, pdf_height = dimensions
         return pdf_height
-
+    
     def parse(
         self, flavor="lattice", suppress_stdout=False, layout_kwargs={}, **kwargs
     ):
         """Extracts tables by calling parser.get_tables on all single
-        page PDFs.
+        page PDFs in threads, then performs merging and sets titles.
 
         Parameters
         ----------
         flavor : str (default: 'lattice')
             The parsing method to use ('lattice' or 'stream').
-            Lattice is used by default.
         suppress_stdout : str (default: False)
             Suppress logs and warnings.
         layout_kwargs : dict, optional (default: {})
-            A dict of `pdfminer.layout.LAParams <https://github.com/euske/pdfminer/blob/master/pdfminer/layout.py#L33>`_ kwargs.
+            A dict of pdfminer.layout.LAParams kwargs.
         kwargs : dict
-            See camelot.read_pdf kwargs.
+            Additional options for parsing.
 
         Returns
         -------
         tables : camelot.core.TableList
             List of tables found in PDF.
-
         """
         tables = []
+        page_tb_list_list = []  # Store tables for each page
+        is_first_tab_merge = []  # Store if the first table on each page was merged
+
         with TemporaryDirectory() as tempdir:
-            for index, p in enumerate(self.pages):
+            # Save pages to temporary directory
+            for p in self.pages:
                 self._save_page(self.filepath, p, tempdir)
+
             pages = [os.path.join(tempdir, f"page-{p}.pdf") for p in self.pages]
-            parser = Lattice(**kwargs) if flavor == "lattice" else Stream(**kwargs)
             
-            pre_table=None
-            last_table=None
+            import time 
+            start_time = time.perf_counter()  # 开始计时
+            # 多线程处理页面表格
+            with ThreadPoolExecutor() as executor:
+                futures = {
+                    executor.submit(
+                        self.extract_tables_thread, kwargs, flavor, p, suppress_stdout, layout_kwargs
+                    ): idx
+                    for idx, p in enumerate(pages)
+                }
+
+                # 收集线程结果
+                page_tb_list_list = [None] * len(pages)
+                for future in as_completed(futures):
+                    idx = futures[future]
+                    try:
+                        tables_extracted = future.result()
+                        page_tb_list_list[idx] = tables_extracted
+                    except Exception as e:
+                        print(f"Error processing page {idx + 1}: {e}")
+            part1_time = time.perf_counter() - start_time  # 结束计时并计算耗时
+            print(f"Part 1 多线程处理页面表格耗时: {part1_time:.2f} seconds")
             
-            page_tb_list_list = [] 
-            for idx,p in enumerate(pages):
-                is_frist_table_merge = False
-                cur_page_table_list = [] # 当前
-                if len(tables) > 0:
-                    last_table = tables[-1]
-                    
-                t = parser.extract_tables(
-                    p, suppress_stdout=suppress_stdout, layout_kwargs=layout_kwargs
-                )
-                tables.extend(t)
-                cur_page_table_list.extend(t)
-                page_tb_list_list.append(cur_page_table_list)
-                if len(t) <= 0:
+            start_time = time.perf_counter()  # 开始计时
+            # 处理提取的表格并且合并
+            pre_table = None
+            last_table = None
+            for idx, cur_page_tables in enumerate(page_tb_list_list):
+                if not cur_page_tables:
+                    is_first_tab_merge.append(False)
                     continue
                 
-                current_table = t[0]
+                if len(tables) > 0:
+                    last_table = tables[-1]
+                
+                tables.extend(cur_page_tables)
+                current_table = cur_page_tables[0]
                 if pre_table:
-                    # 满足条件直接合并表格
-                    # if pre_table.df.shape[1] == current_table.df.shape[1]:
-                    is_frist_table_merge =  self.merge_cross_table(p,tables, pre_table, last_table, current_table, **kwargs)
-                pre_table = t[-1]
-                self.set_title_for_table(kwargs, p, pages, page_tb_list_list, idx, is_frist_table_merge, t)
-                    
+                    # 检查现在的页面是否需要合并
+                    first_merge = self.merge_cross_table(
+                        pages[idx], tables, pre_table, last_table, current_table, **kwargs
+                    )
+                    is_first_tab_merge.append(first_merge)
+                else:
+                    is_first_tab_merge.append(False)
+
+                pre_table = cur_page_tables[-1]
+            part2_time = time.perf_counter() - start_time  # 结束计时并计算耗时
+            print(f"Part 2 处理提取的表格并且合并耗时: {part2_time:.2f} seconds")
+            
+            start_time = time.perf_counter()  # 开始计时
+            # 多线程处理表格标题设置
+            with ThreadPoolExecutor() as executor:
+                futures = {
+                    executor.submit(
+                        self.set_title_for_table, kwargs, pages[idx], pages,
+                        page_tb_list_list, idx, is_first_tab_merge[idx], cur_page_tables
+                    ): idx
+                    for idx, cur_page_tables in enumerate(page_tb_list_list) if cur_page_tables
+                }
+
+                # 等待所有线程完成
+                for future in as_completed(futures):
+                    idx = futures[future]
+                    try:
+                        future.result()  # 捕获线程中的异常
+                    except Exception as e:
+                        print(f"Error setting title for page {idx + 1}: {e}")
+            part3_time = time.perf_counter() - start_time  # 结束计时并计算耗时
+            print(f"Part 3 多线程处理表格标题设置耗时: {part3_time:.2f} seconds")
+        
         return TableList(sorted(tables))
+
+    def extract_tables_thread(self, kwargs,flavor, page, suppress_stdout, layout_kwargs):
+        """Extract tables from a single page with thread-safe lock."""
+        parser = Lattice(**kwargs) if flavor == "lattice" else Stream(**kwargs)
+        
+        return parser.extract_tables(
+            page, suppress_stdout=suppress_stdout, layout_kwargs=layout_kwargs
+        )
 
     def set_title_for_table(self, kwargs, p, pages, page_tb_list_list, idx, is_frist_table_merge, t):
         if is_frist_table_merge == False:
