@@ -17,7 +17,7 @@ htmlcov/
 
 # vscode
 .vscode
-
+output_titles/
 output_tables/
 excel_outputs/
 pdfs/

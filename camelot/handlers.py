@@ -211,7 +211,7 @@ class PDFHandler(object):
             import time 
             start_time = time.perf_counter()  # 开始计时
             # 多线程处理页面表格
-            with ThreadPoolExecutor() as executor:
+            with ThreadPoolExecutor(max_workers=os.cpu_count()) as executor:
                 futures = {
                     executor.submit(
                         self.extract_tables_thread, kwargs, flavor, p, suppress_stdout, layout_kwargs
@@ -229,7 +229,8 @@ class PDFHandler(object):
                     except Exception as e:
                         print(f"Error processing page {idx + 1}: {e}")
             part1_time = time.perf_counter() - start_time  # 结束计时并计算耗时
-            print(f"Part 1 多线程处理页面表格耗时: {part1_time:.2f} seconds")
+            file_name = self.filepath.split('/')[-1]
+            print(f"{file_name} - Part 1 多线程处理页面表格耗时: {part1_time:.2f} seconds")
             
             start_time = time.perf_counter()  # 开始计时
             # 处理提取的表格并且合并
@@ -256,11 +257,11 @@ class PDFHandler(object):
 
                 pre_table = cur_page_tables[-1]
             part2_time = time.perf_counter() - start_time  # 结束计时并计算耗时
-            print(f"Part 2 处理提取的表格并且合并耗时: {part2_time:.2f} seconds")
+            print(f"{file_name} - Part 2 处理提取的表格并且合并耗时: {part2_time:.2f} seconds")
             
             start_time = time.perf_counter()  # 开始计时
             # 多线程处理表格标题设置
-            with ThreadPoolExecutor() as executor:
+            with ThreadPoolExecutor(max_workers=os.cpu_count()) as executor:
                 futures = {
                     executor.submit(
                         self.set_title_for_table, kwargs, pages[idx], pages,
@@ -277,7 +278,7 @@ class PDFHandler(object):
                     except Exception as e:
                         print(f"Error setting title for page {idx + 1}: {e}")
             part3_time = time.perf_counter() - start_time  # 结束计时并计算耗时
-            print(f"Part 3 多线程处理表格标题设置耗时: {part3_time:.2f} seconds")
+            print(f"{file_name} - Part 3 多线程处理表格标题设置耗时: {part3_time:.2f} seconds")
         
         return TableList(sorted(tables))
 
@@ -297,17 +298,17 @@ class PDFHandler(object):
                         # 判断上一页有没有表格，如果有那么获取它的页面底部y坐标否则0
                 pre_table_bottom_y = page_tb_list_list[idx-1][-1]._bbox[1] if len(page_tb_list_list[idx-1]) > 0 else 0
                         # 当前表格顶部归零，即从上一页底部网上找，找到距离最近的标题，但是不超过上一页最后一个表的底部y坐标 10回调值
-                t[0].title = self.find_table_title(0, pages[idx-1],pre_table_bottom_y,kwargs)
+                t[0].candidate_title = self.find_table_title(0, pages[idx-1],pre_table_bottom_y,kwargs)
             else:
                         # 在当表格y坐标网上找，找到距离最近的标题 当前表格顶部y t[0]._bbox[3] 找到空白部分之下 10是回调值
-                t[0].title = self.find_table_title(t[0]._bbox[3], p,page_height,kwargs)
+                t[0].candidate_title = self.find_table_title(t[0]._bbox[3], p,page_height,kwargs)
                     
         if len(t) > 1:
                     # 当前也页面之后的每个表的标题，在上个表格底部之下的区域寻找
             for i in range(1, len(t)):
                 pre_table_bottom_y = t[i-1]._bbox[1]
                         # 当前表格顶部坐标 t[i]._bbox[3]之上，上个表格底部坐标之下
-                t[i].title = self.find_table_title(t[i]._bbox[3], p,pre_table_bottom_y,kwargs)
+                t[i].candidate_title = self.find_table_title(t[i]._bbox[3], p,pre_table_bottom_y,kwargs)
 
     def _generate_layout(self, filename):
         layout, dimensions = get_page_layout(filename)
