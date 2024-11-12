@@ -31,7 +31,7 @@ def save_csv_to_excel(input_folder, output_folder):
             for file in files:
                 csv_path = os.path.join(input_folder, file)
                 df = pd.read_csv(csv_path)  # 读取 CSV 文件为 DataFrame
-                sheet_name = os.path.splitext(file)[0]  # 工作表名
+                sheet_name = os.path.splitext(file)[0][-30:]  # 工作表名
                 df.to_excel(writer, sheet_name=sheet_name, index=False)  # 保存到 Excel
 
         print(f"Saved {excel_path}")

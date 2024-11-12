@@ -270,7 +270,8 @@ class Lattice(BaseParser):
                 line_scale=self.line_scale,
                 iterations=self.iterations,
             )
-
+            # cv2.imshow("Boundaries Mask", vertical_mask + horizontal_mask)
+            
             contours = find_contours(vertical_mask, horizontal_mask)
             table_bbox = find_joints(contours, vertical_mask, horizontal_mask)
         else:

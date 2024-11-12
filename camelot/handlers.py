@@ -165,6 +165,9 @@ class PDFHandler(object):
         bottom_threshold = kwargs.get('bottom_threshold', 100)
         top_threshold = pdf_height - kwargs.get('top_threshold', 90)
         
+        if cur_table.page - pre_table.page > 1:
+            return False
+        
         if pre_y_bottom <= bottom_threshold and cur_y_top >= top_threshold:
             return True
         else:

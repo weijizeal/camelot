@@ -3,11 +3,11 @@ import os
 import pandas as pd
 
 # 调用函数并传入PDF文件路径
-pdf_path = "C:\\Users\\weiji\\Documents\\projects\\camelot\\pdfs\\东方电子2024三季度报告.PDF"
+pdf_path = "C:\\Users\\weiji\\Documents\\projects\\camelot\\pdfs\\格力半年度报告.PDF"
 
 # 读取PDF文件中的表格
 tables = camelot.read_pdf(
-    pdf_path, pages='all', 
+    pdf_path, pages='28', 
     bottom_threshold=130, top_threshold=90, 
     number_of_hearder_rows=6,
     strip_text='\n',  # 去除换行符

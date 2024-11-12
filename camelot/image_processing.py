@@ -87,12 +87,14 @@ def find_lines(
         lines lie.
     lines : list
         List of tuples representing vertical/horizontal lines with
-        coordinates relative to a left-top origin in
-        image coordinate space.
-
+        coordinates relative to a left-top origin in image coordinate space.
     """
     lines = []
 
+    # 获取图像的宽度和高度
+    height, width = threshold.shape
+
+    # 根据方向选择结构元素的大小
     if direction == "vertical":
         size = threshold.shape[0] // line_scale
         el = cv2.getStructuringElement(cv2.MORPH_RECT, (1, size))
@@ -102,6 +104,7 @@ def find_lines(
     elif direction is None:
         raise ValueError("Specify direction as either 'vertical' or 'horizontal'")
 
+    # 如果定义了 regions，则只在指定区域中寻找线条
     if regions is not None:
         region_mask = np.zeros(threshold.shape)
         for region in regions:
@@ -109,28 +112,51 @@ def find_lines(
             region_mask[y : y + h, x : x + w] = 1
         threshold = np.multiply(threshold, region_mask)
 
+    # 进行形态学操作
     threshold = cv2.erode(threshold, el)
     threshold = cv2.dilate(threshold, el)
     dmask = cv2.dilate(threshold, el, iterations=iterations)
 
+    # 查找轮廓
     try:
         _, contours, _ = cv2.findContours(
             threshold.astype(np.uint8), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
         )
     except ValueError:
-        # for opencv backward compatibility
         contours, _ = cv2.findContours(
             threshold.astype(np.uint8), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
         )
 
+    # 创建一个新的 mask 图像，用于更新线条
+    updated_mask = np.zeros_like(threshold)
+
+    # 处理轮廓并更新线条
     for c in contours:
         x, y, w, h = cv2.boundingRect(c)
         x1, x2 = x, x + w
         y1, y2 = y, y + h
+
+        # 根据方向调整线条的坐标，并确保坐标不超出边界
         if direction == "vertical":
-            lines.append(((x1 + x2) // 2, y2, (x1 + x2) // 2, y1))
+            y1_expanded = max(0, y1 - 2)
+            y2_expanded = min(height, y2 + 2)
+            x_center = (x1 + x2) // 2
+            lines.append((x_center, y2_expanded, x_center, y1_expanded))
+
+            # 在 mask 上绘制扩展后的竖线
+            cv2.line(updated_mask, (x_center, y1_expanded), (x_center, y2_expanded), 255, 1)
+
         elif direction == "horizontal":
-            lines.append((x1, (y1 + y2) // 2, x2, (y1 + y2) // 2))
+            x1_expanded = max(0, x1 - 2)
+            x2_expanded = min(width, x2 + 2)
+            y_center = (y1 + y2) // 2
+            lines.append((x1_expanded, y_center, x2_expanded, y_center))
+
+            # 在 mask 上绘制扩展后的横线
+            cv2.line(updated_mask, (x1_expanded, y_center), (x2_expanded, y_center), 255, 1)
+
+    # 合并更新后的线条 mask 到 dmask 中
+    dmask = cv2.bitwise_or(dmask, updated_mask)
 
     return dmask, lines
 
@@ -199,6 +225,10 @@ def find_joints(contours, vertical, horizontal):
 
     """
     joints = np.multiply(vertical, horizontal)
+    # joints_flex = joints * 255
+    # cv2.imshow("Joints after Dilation", joints_flex)
+    # cv2.waitKey(0)
+    
     tables = {}
     for c in contours:
         x, y, w, h = c
