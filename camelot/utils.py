@@ -341,12 +341,12 @@ def segments_in_bbox(bbox, v_segments, h_segments):
     v_s = [
         v
         for v in v_segments
-        if v[1] > lb[1] - 2 and v[3] < rt[1] + 2 and lb[0] - 2 <= v[0] <= rt[0] + 2
+        if v[1] > lb[1] - 4 and v[3] < rt[1] + 4 and lb[0] - 2 <= v[0] <= rt[0] + 2
     ]
     h_s = [
         h
         for h in h_segments
-        if h[0] > lb[0] - 2 and h[2] < rt[0] + 2 and lb[1] - 2 <= h[1] <= rt[1] + 2
+        if h[0] > lb[0] - 4 and h[2] < rt[0] + 4 and lb[1] - 2 <= h[1] <= rt[1] + 2
     ]
     return v_s, h_s
 
@@ -762,6 +762,7 @@ def compute_whitespace(d):
 
 def get_page_layout(
     filename,
+    line_overlap=0.5,
     char_margin=1.0,
     line_margin=0.5,
     word_margin=0.1,
@@ -796,6 +797,7 @@ def get_page_layout(
         if not document.is_extractable:
             raise PDFTextExtractionNotAllowed
         laparams = LAParams(
+            line_overlap=line_overlap,
             char_margin=char_margin,
             line_margin=line_margin,
             word_margin=word_margin,

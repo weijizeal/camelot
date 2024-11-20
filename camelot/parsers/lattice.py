@@ -105,12 +105,13 @@ class Lattice(BaseParser):
         process_background=False,
         line_scale=70,
         copy_text=None,
+        # copy_text= {'h', 'v'},
         shift_text=["l", "t"],
         split_text=False,
         flag_size=False,
         strip_text="",
         line_tol=2,
-        joint_tol=2,
+        joint_tol=4,
         threshold_blocksize=15,
         threshold_constant=-2,
         iterations=0,
@@ -271,7 +272,7 @@ class Lattice(BaseParser):
                 iterations=self.iterations,
             )
             # cv2.imshow("Boundaries Mask", vertical_mask + horizontal_mask)
-            
+            # cv2.imwrite("Boundaries Mask.png", vertical_mask + horizontal_mask)
             contours = find_contours(vertical_mask, horizontal_mask)
             table_bbox = find_joints(contours, vertical_mask, horizontal_mask)
         else:
@@ -311,33 +312,84 @@ class Lattice(BaseParser):
 
         self.t_bbox = t_bbox
 
-        cols, rows = zip(*self.table_bbox[tk])
-        cols, rows = list(cols), list(rows)
+        cols, rows = zip(*self.table_bbox[tk]) # 表格交点坐标 （x,y）
+        cols, rows = list(cols), list(rows) # 表格关节点 x,y 分别分成一个数组
         cols.extend([tk[0], tk[2]])
         rows.extend([tk[1], tk[3]])
         # sort horizontal and vertical segments
-        cols = merge_close_lines(sorted(cols), line_tol=self.line_tol)
-        rows = merge_close_lines(sorted(rows, reverse=True), line_tol=self.line_tol)
+        cols = merge_close_lines(sorted(cols), line_tol=self.line_tol) # 把交点的x坐标排序，并合并
+        rows = merge_close_lines(sorted(rows, reverse=True), line_tol=self.line_tol) # y排序合并
         # make grid using x and y coord of shortlisted rows and cols
-        cols = [(cols[i], cols[i + 1]) for i in range(0, len(cols) - 1)]
-        rows = [(rows[i], rows[i + 1]) for i in range(0, len(rows) - 1)]
+        cols = [(cols[i], cols[i + 1]) for i in range(0, len(cols) - 1)] # 把相邻的x坐标合并成线段
+        rows = [(rows[i], rows[i + 1]) for i in range(0, len(rows) - 1)] # 把相邻的y坐标合并成线段
 
         return cols, rows, v_s, h_s
 
+    def _remove_inner_lines(self, table, vertical, horizontal):
+        """Removes inner lines from table.
+        """
+        remove_v, remove_h = [], []
+        for row in table.cells:
+            for cell in row:
+                # 去掉表格内部横线
+                rv,rh = self.segments_in_cell([cell.lb[0], cell.lb[1], cell.rt[0], cell.rt[1]], vertical, horizontal)
+                remove_v.extend(rv)
+                remove_h.extend(rh)
+
+        return [v for v in vertical if v not in remove_v], [h for h in horizontal if h not in remove_h]
+
+    def segments_in_cell(self,bbox, v_segments, h_segments):
+        """Returns all line segments present inside a bounding box.
+
+        Parameters
+        ----------
+        cell : tuple
+            Tuple (x1, y1, x2, y2) representing a bounding box where
+            (x1, y1) -> lb and (x2, y2) -> rt in PDFMiner coordinate
+            space.
+        v_segments : list
+            List of vertical line segments.
+        h_segments : list
+            List of vertical horizontal segments.
+
+        Returns
+        -------
+        v_s : list
+            List of vertical line segments that lie inside table.
+        h_s : list
+            List of horizontal line segments that lie inside table.
+
+        """
+        lb = (bbox[0], bbox[1])
+        rt = (bbox[2], bbox[3])
+        v_s = [
+            v
+            for v in v_segments
+            if v[1] > lb[1] and v[3] < rt[1] and lb[0] <= v[0] <= rt[0]
+        ]
+        h_s = [
+            h
+            for h in h_segments
+            if h[0] > lb[0] and h[2] < rt[0] and lb[1]<= h[1] <= rt[1]
+        ]
+        return v_s, h_s
+    
     def _generate_table(self, table_idx, cols, rows, **kwargs):
-        v_s = kwargs.get("v_s")
-        h_s = kwargs.get("h_s")
+        v_s = kwargs.get("v_s") # 提取的竖直线
+        h_s = kwargs.get("h_s") # 提取的横直线
         if v_s is None or h_s is None:
             raise ValueError("No segments found on {}".format(self.rootname))
 
-        table = Table(cols, rows)
+        table = Table(cols, rows) # 表格单元格横线竖线坐标
+        # 去掉每个单元格内的细线干扰
+        v_s,h_s = self._remove_inner_lines(table, v_s,h_s)
         # set table edges to True using ver+hor lines
         table = table.set_edges(v_s, h_s, joint_tol=self.joint_tol)
         # set table border edges to True
         table = table.set_border()
         # set spanning cells to True
         table = table.set_span()
-
+        
         pos_errors = []
         # TODO: have a single list in place of two directional ones?
         # sorted on x-coordinate based on reading order i.e. LTR or RTL
@@ -363,6 +415,15 @@ class Lattice(BaseParser):
         if self.copy_text is not None:
             table = Lattice._copy_spanning_text(table, copy_text=self.copy_text)
 
+        # 检测表格的列数
+        table = table.detect_columns()
+        table.is_multi_table()
+        if table.is_multi_table_:
+            table = table.merge_table_columns()
+        
+        # 检测表头区域，检测后用行下标元组表示如(0,1)
+        table = table.detect_header()
+        
         data = table.data
         table.df = pd.DataFrame(data)
         table.shape = table.df.shape
@@ -386,6 +447,7 @@ class Lattice(BaseParser):
         return table
 
     def extract_tables(self, filename, suppress_stdout=False, layout_kwargs={}):
+        layout_kwargs["line_overlap"] = 1
         self._generate_layout(filename, layout_kwargs)
         if not suppress_stdout:
             logger.info("Processing {}".format(os.path.basename(self.rootname)))
@@ -406,7 +468,7 @@ class Lattice(BaseParser):
         self._generate_table_bbox()
 
         _tables = []
-        # sort tables based on y-coord
+        # sort tables based on y-coord 从上到下的表格顺序 排序后的下标和 tk
         for table_idx, tk in enumerate(
             sorted(self.table_bbox.keys(), key=lambda x: x[1], reverse=True)
         ):

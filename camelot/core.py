@@ -289,6 +289,7 @@ class Cell(object):
         self.hspan = False
         self.vspan = False
         self._text = ""
+        self.hspan_len = 0
 
     def __repr__(self):
         return "<Cell x1={} y1={} x2={} y2={}>".format(
@@ -309,6 +310,20 @@ class Cell(object):
         """
         return self.top + self.bottom + self.left + self.right
 
+class TableHeader(object):
+    """Defines a table header with coordinates relative to a
+    left-bottom origin. (PDF coordinate space)
+    """
+    
+    def __init__(self, cells, range):
+        self.cells = cells
+        self.table_cells_index_range = range
+    
+    def __repr__(self):
+        return "<TableHeader {}>".format(self.cells)
+    
+    def to_text(self):
+        return " ".join([cell.text.strip() for cell in self.cells])
 
 class Table(object):
     """Defines a table with coordinates relative to a left-bottom
@@ -351,6 +366,11 @@ class Table(object):
         self.order = None
         self.page = None
         self.candidate_title = None
+        self.clumn_nums = None
+        self.column_len_hspan_origin = None
+        self.is_multi_table_ = False
+        self.header = None
+        self.is_merge_column = False
 
     def __repr__(self):
         return "<{} shape={}>".format(self.__class__.__name__, self.shape)
@@ -367,8 +387,25 @@ class Table(object):
         """Returns two-dimensional list of strings in table.
         """
         d = []
-        for row in self.cells:
-            d.append([cell.text.strip() for cell in row])
+        if not self.is_merge_column:
+            for row in self.cells:
+                d.append([cell.text.strip() for cell in row])
+        else:
+            for index, (column_len_row, _, column_len_table) in enumerate(self.column_len_hspan_origin):
+                row_data = []
+                if  column_len_row < column_len_table:
+                    for cell in self.cells[index]:
+                        if cell.vspan:
+                            row_data.append(cell.text.strip())
+                        else:
+                            for c in range(cell.hspan_len):
+                                row_data.append(cell.text.strip())
+                            
+                else:
+                    for cell in self.cells[index]:
+                        row_data.append(cell.text.strip())
+                d.append(row_data)
+
         return d
 
     @property
@@ -385,6 +422,263 @@ class Table(object):
             "candidate_title": self.candidate_title,
         }
         return report
+    
+    def is_multi_table(self):
+        """judge whether need merge column, when the column_len_table is not always the same, except the columns length is 1
+        """
+        # 将 column_nums列表中的元组的第一个元素取出来并去重 查看包含的是否是1和一个大于1的数
+        column_nums = self.clumn_nums
+        column_nums = [column_nums[i][0] for i in range(len(column_nums))]
+        
+        # 判断是否是1和一个大于1的数
+        if len(column_nums) == 2 and 1 in column_nums and max(column_nums) > 1:
+            self.is_multi_table_ = False
+        
+        # 判断是否是只有一个列数
+        if len(column_nums) == 1:
+            self.is_multi_table_ = False
+        
+        self.is_multi_table_ = True
+    
+    
+    def detect_header(self):
+        """Detects header in table.
+        """
+        start = end = 0
+        if not self.is_multi_table:
+            start = 0
+            # 判断第一行是否列数为1，如果是，从第二行开始检测表头。
+            if self.column_len_hspan_origin[0][0] == 1:
+                start = 1
+        else:
+            # 最后一个表格的起始位置
+            start = self.clumn_nums[-1][1]
+        index = start
+        cell = self.cells[index][0]
+        while index < len(self.cells) - 1 and cell.vspan and not cell.bottom:
+            index += 1
+            cell = self.cells[index][0]
+        end = index 
+        
+        if start == end:
+            self.header = TableHeader(self.cells[start], (start,end))
+        else:
+            self.header = TableHeader(self.cells[start:end], (start,end))
+            
+        return self
+    
+    def detect_columns(self):
+        """Detects columns in table.
+        """
+        # （行下标，列数，垂直跨行）元组列表
+        column_len_hspan = []
+        self.column_len_hspan_origin = []
+        for row_index, row in enumerate(self.cells):
+            vspan = self.row_has_vspan(row)
+            column_len_row = self.count_columns_in_row(row_index)
+            column_len_hspan.append([column_len_row, vspan, column_len_row])
+    
+        # 处理垂直跨行的情况
+        hspan_index_arr = []
+        for row_index, (_ , vspan, _) in enumerate(column_len_hspan):
+            if vspan:
+                # 如果当前行有跨列，则将其行索引添加到 hspan_index_arr
+                hspan_index_arr.append(row_index)
+            else:
+                # 如果当前行没有跨列，则将之前所有跨行的列数更新为当前行的列数
+                if len(hspan_index_arr) > 0: 
+                    for hspan_index in hspan_index_arr:
+                        column_len_table = column_len_hspan[row_index][0]
+                        column_len_hspan[hspan_index][2] = column_len_table
+                    
+                    hspan_index_arr = []
+        
+        self.column_len_hspan_origin = column_len_hspan
+        
+        # （列数，起始下标）元组列表
+        clumn_nums = []
+        start = 0
+        end = 0
+        old_column_len = -1
+        for row_index, (_, vspan, column_len_table) in enumerate(column_len_hspan):
+            # 如果是同样的列数，则更新结束下标
+            if column_len_table == old_column_len or old_column_len == -1:
+                end = row_index
+                old_column_len = column_len_table
+            else:
+                # 否则，添加到列表中，并更新起始下标
+                clumn_nums.append((old_column_len, start, end))
+                start = row_index
+                end = row_index
+                old_column_len = column_len_table
+        # 添加最后一组
+        clumn_nums.append((old_column_len, start, end))
+        self.clumn_nums = clumn_nums
+             
+        return self
+
+    def merge_table_columns(self):
+        """Merges columns in table.
+        """
+        merge_count = 0
+        for index, (_, _, column_len_table) in enumerate(self.column_len_hspan_origin):
+            if column_len_table < len(self.cells[index]):
+                self.merge_column_row(index)
+                merge_count += 1
+        
+        if merge_count == 0:
+            return self
+        
+        self.is_merge_column = True
+        
+        for index, (_, start, end) in enumerate(self.clumn_nums):
+            if start != end:
+                for row_index in range(start, end):
+                    # （合并之后 行内列数小于表格列数，需要计算hspan_len
+                    if self.column_len_hspan_origin[row_index][0] < self.column_len_hspan_origin[row_index][2]:
+                        for cell in self.cells[row_index]:
+                            if not cell.vspan:
+                                cell.hspan_len = self.find_hspan_len(cell, self.cells[end])
+                    
+        return self
+    
+    def find_hspan_len(self, target_cell, row):
+        """Finds the horizontal span length of a cell in a row.
+        """
+        hspan_len = 0
+        for cell in row:
+            if target_cell.x2 >= cell.x2 and cell.x1 >= target_cell.x1:
+                hspan_len += 1
+        
+        return hspan_len
+    
+    def merge_column_row(self, row_index, vspan=False):
+        """Merges columns in table by vertical span or horizontal span."""
+        # 初始化变量
+        start, end = 0, 0
+        index = 0
+        merge_list = []
+        
+        while index < len(self.cells[row_index]):
+            cell = self.cells[row_index][index]
+            
+            # 根据 vspan 参数决定合并逻辑
+            if vspan:
+                # 合并具有 hspan 和 vspan 且非右边界的单元格
+                while index < len(self.cells[row_index]) - 1 and cell.hspan and cell.vspan and not cell.right:
+                    index += 1
+                    cell = self.cells[row_index][index]
+                end = index
+            else:
+                # 合并仅具有 hspan 且非右边界的单元格
+                while index < len(self.cells[row_index]) - 1 and cell.hspan and not cell.right:
+                    index += 1
+                    cell = self.cells[row_index][index]
+                end = index
+            
+            # 记录需要合并的单元格范围
+            if start != end:
+                merge_list.append((start, end))
+                
+            index += 1
+            start = end = index
+
+        # 如果有需要合并的单元格，执行合并
+        if merge_list:
+            self.merge_columns_by_list(row_index, merge_list)
+            
+        return self
+
+
+    def merge_columns_by_list(self, row_index, merge_list):
+        """Merges columns in table by list while keeping the original order."""
+        new_cell_list = []
+        merge_dict = {start: end for start, end in merge_list}  # 将合并列表转换为字典
+        index = 0
+
+        while index < len(self.cells[row_index]):
+            # 检查当前索引是否在合并列表中
+            if index in merge_dict:
+                # 获取合并范围
+                start = index
+                end = merge_dict[start]
+                start_cell = self.cells[row_index][start]
+                end_cell = self.cells[row_index][end]
+                
+                # 创建合并后的新单元格
+                lb = start_cell.lb
+                rt = end_cell.rt
+                new_cell = Cell(lb[0], lb[1], rt[0], rt[1])
+                new_cell = self.reset_parameters(start_cell, new_cell)
+                
+                # 将合并后的新单元格加入新列表
+                new_cell_list.append(new_cell)
+                
+                # 跳过已合并的单元格
+                index = end + 1
+            else:
+                # 未被合并的单元格，直接加入列表
+                new_cell_list.append(self.cells[row_index][index])
+                index += 1
+
+        # 更新当前行的单元格列表
+        self.cells[row_index] = new_cell_list
+        return self
+
+
+    def reset_parameters(self, start_cell, new_cell: Cell):
+        new_cell.hspan = False
+        new_cell.right = True
+        
+        new_cell.vspan = start_cell.vspan
+        new_cell.left = start_cell.left
+        new_cell.top = start_cell.top
+        new_cell.bottom = start_cell.bottom
+        new_cell._text = start_cell._text
+        return new_cell
+            
+        
+    
+    def row_has_vspan(self, row):
+        """Checks if a cell has a horizontal span.
+        """
+        for cell in row:
+            if cell.vspan:
+                return True
+        return False
+
+    def count_columns_in_row(self, row_index):
+        """
+        Counts the number of columns in a given row before merging.
+        
+        Parameters:
+        - row_index: int, the index of the row to check.
+        
+        Returns:
+        - int: the number of columns in the specified row.
+        """
+        # 初始化变量
+        index = 0
+        column_count = 0
+        
+        # 遍历该行中的所有单元格
+        while index < len(self.cells[row_index]):
+            cell = self.cells[row_index][index]
+            
+            # 跳过向右合并的单元格
+            while index < len(self.cells[row_index]) - 1 and cell.hspan and not cell.right:
+                index += 1
+                cell = self.cells[row_index][index]
+            
+            # 遇到一个实际的列（不是被合并的单元格），增加列计数
+            column_count += 1
+            
+            # 移动到下一个单元格
+            index += 1
+
+        return column_count
+
+        
 
     def set_all_edges(self):
         """Sets all table edges to True.
@@ -393,7 +687,7 @@ class Table(object):
             for cell in row:
                 cell.left = cell.right = cell.top = cell.bottom = True
         return self
-
+    
     def set_edges(self, vertical, horizontal, joint_tol=2):
         """Sets a cell's edges to True depending on whether the cell's
         coordinates overlap with the line's coordinates within a
@@ -414,21 +708,21 @@ class Table(object):
                 i
                 for i, t in enumerate(self.cols)
                 if np.isclose(v[0], t[0], atol=joint_tol)
-            ]
+            ] # 找最近的x左边 竖直线只有一个x 列坐标
             j = [
                 j
                 for j, t in enumerate(self.rows)
                 if np.isclose(v[3], t[0], atol=joint_tol)
-            ]
+            ] # 找最近的上方y坐标邻近y  对应的下标
             k = [
                 k
                 for k, t in enumerate(self.rows)
                 if np.isclose(v[1], t[0], atol=joint_tol)
-            ]
+            ] # 找下方的y坐标邻近y 对应的下标
             if not j:
                 continue
             J = j[0]
-            if i == [0]:  # only left edge
+            if i == [0]:  # 靠近第一列表格
                 L = i[0]
                 if k:
                     K = k[0]
@@ -440,7 +734,7 @@ class Table(object):
                     while J < K:
                         self.cells[J][L].left = True
                         J += 1
-            elif i == []:  # only right edge
+            elif i == []:  # 是表格的右边竖线
                 L = len(self.cols) - 1
                 if k:
                     K = k[0]
@@ -452,7 +746,7 @@ class Table(object):
                     while J < K:
                         self.cells[J][L].right = True
                         J += 1
-            else:  # both left and right edges
+            else:  # 左线右线都有
                 L = i[0]
                 if k:
                     K = k[0]
@@ -566,6 +860,9 @@ class Table(object):
                         cell.vspan = True
                     elif top and bottom and (not left and not right):
                         cell.hspan = True
+                    else:
+                        cell.vspan = True
+                        cell.hspan = True
                 elif cell.bound in [0, 1]:
                     cell.vspan = True
                     cell.hspan = True
@@ -642,7 +939,7 @@ class Table(object):
         """Writes Table to sqlite database.
 
         For kwargs, check :meth:`pandas.DataFrame.to_sql`.
-
+                                                                                                                                                                                                                                                                                                                                                                                                    
         Parameters
         ----------
         path : str

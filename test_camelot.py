@@ -3,11 +3,11 @@ import os
 import pandas as pd
 
 # 调用函数并传入PDF文件路径
-pdf_path = "C:\\Users\\weiji\\Documents\\projects\\camelot\\pdfs\\格力半年度报告.PDF"
+pdf_path = "C:\\Users\\weiji\\Documents\\projects\\camelot\\pdfs\\同兴环保：2024年三季度报告.pdf"
 
 # 读取PDF文件中的表格
 tables = camelot.read_pdf(
-    pdf_path, pages='28', 
+    pdf_path, pages='3', 
     bottom_threshold=130, top_threshold=90, 
     number_of_hearder_rows=6,
     strip_text='\n',  # 去除换行符
@@ -46,8 +46,8 @@ for i, table in enumerate(tables):
 
     # 判断表格是否为空，如果不为空则保存为 CSV 文件，并增加计数器
     if not is_table_empty(df):
-        output_file = os.path.join(output_dir, f"{pdf_name}_table_{i + 1}.csv")
-        df.to_csv(output_file, index=False, encoding='utf-8-sig')
+        output_file = os.path.join(output_dir, f"table_{i + 1}_{pdf_name}.csv")
+        df.to_csv(output_file, index=False, header=False , encoding='utf-8-sig')
         print(f"Saved: {output_file}")
         non_empty_table_count += 1  # 记录非空表格数量
     else:

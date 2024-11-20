@@ -63,7 +63,7 @@ def extract_tables_from_pdf(pdf_path, output_dir,output_titles_dir):
     print(f"Processing {pdf_path}...")
     try:
         # 提取 PDF 中的表格
-        tables = camelot.read_pdf(pdf_path, pages='all', bottom_threshold=130, top_threshold=90,number_of_hearder_rows=6)
+        tables = camelot.read_pdf(pdf_path, pages='all', bottom_threshold=130, top_threshold=90,number_of_hearder_rows=6,strip_text='\n ')
         print(f"[{pdf_path}] Total tables extracted: {len(tables)}")
 
         # 遍历提取的表格并保存为 CSV 文件
@@ -77,9 +77,9 @@ def extract_tables_from_pdf(pdf_path, output_dir,output_titles_dir):
                     "candidate_title":table.candidate_title,
                     "title":title
                 })
-                output_file = os.path.join(output_dir, f"{pdf_name}_{title}_{count}.csv")
+                output_file = os.path.join(output_dir, f"{pdf_name}_{count}_{title}.csv")
                 count = count + 1
-                table.df.to_csv(output_file, index=False, encoding='utf-8-sig')
+                table.df.to_csv(output_file, index=False, header=False, encoding='utf-8-sig')
 
         output_titles_file = os.path.join(output_titles_dir, f"{pdf_name}.json")
         with open(output_titles_file, 'w') as f:
@@ -116,10 +116,10 @@ def extract_from_folder(folder_path, output_dir, output_titles_dir ,max_workers=
 if __name__ == "__main__":
     print("Start PDFs processed.")
     # 当前目录下的 'pdfs' 文件夹
-    folder_path = os.path.join(os.getcwd(), "pdfs")
+    folder_path = os.path.join(os.getcwd(), "pdf_三季度")
 
     # 当前目录下的 'output_tables' 文件夹
-    output_dir = os.path.join(os.getcwd(), "output_tables")
+    output_dir = os.path.join(os.getcwd(), "output_三季度")
 
     # 输出提取文件标题和候选标题的文件
     output_titles_dir = os.path.join(os.getcwd(), "output_titles")

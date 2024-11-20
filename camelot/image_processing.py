@@ -227,6 +227,8 @@ def find_joints(contours, vertical, horizontal):
     joints = np.multiply(vertical, horizontal)
     # joints_flex = joints * 255
     # cv2.imshow("Joints after Dilation", joints_flex)
+    # 保存图像为 PNG 格式
+    # cv2.imwrite("joints_after_dilation.png", joints_flex)
     # cv2.waitKey(0)
     
     tables = {}
@@ -247,6 +249,8 @@ def find_joints(contours, vertical, horizontal):
         joint_coords = []
         for j in jc:
             jx, jy, jw, jh = cv2.boundingRect(j)
+            # jx + jw // 2, jy + jh // 2 是交点在roi的中心坐标
+            # x + jx + jw // 2, y + jy + jh // 2 是交点在原图的中心坐标
             c1, c2 = x + (2 * jx + jw) // 2, y + (2 * jy + jh) // 2
             joint_coords.append((c1, c2))
         tables[(x, y + h, x + w, y)] = joint_coords
