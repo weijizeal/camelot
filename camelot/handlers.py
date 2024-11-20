@@ -153,8 +153,8 @@ class PDFHandler(object):
     # 3.顶部可以下移，底部可以上移，将顶部数字变小，底部数字变大 如 顶部 767 - 17 = 750 底部 81 + 10 = 91
     # 4.得出顶部和顶部的y的范围 如 pre_y <= 91 和 底部 cur_y >= 757
 
-    def check_need_merge(self,p, pre_table, cur_table, **kwargs):
-        pre_bbox = pre_table._bbox
+    def check_need_merge(self,p, pre_page_last_table, cur_table, **kwargs):
+        pre_bbox = pre_page_last_table._bbox
         cur_table_bbox = cur_table._bbox
         
         pre_y_bottom = pre_bbox[1]
@@ -165,7 +165,7 @@ class PDFHandler(object):
         bottom_threshold = kwargs.get('bottom_threshold', 100)
         top_threshold = pdf_height - kwargs.get('top_threshold', 90)
         
-        if cur_table.page - pre_table.page > 1:
+        if cur_table.page - pre_page_last_table.page > 1:
             return False
         
         if pre_y_bottom <= bottom_threshold and cur_y_top >= top_threshold:
@@ -237,28 +237,28 @@ class PDFHandler(object):
             
             start_time = time.perf_counter()  # 开始计时
             # 处理提取的表格并且合并
-            pre_table = None
-            last_table = None
-            for idx, cur_page_tables in enumerate(page_tb_list_list):
-                if not cur_page_tables:
+            pre_page_last_table = None
+            last_in_table = None
+            for idx, current_page_tables in enumerate(page_tb_list_list):
+                if not current_page_tables:
                     is_first_tab_merge.append(False)
                     continue
                 
                 if len(tables) > 0:
-                    last_table = tables[-1]
+                    last_in_table = tables[-1]
                 
-                tables.extend(cur_page_tables)
-                current_table = cur_page_tables[0]
-                if pre_table:
+                tables.extend(current_page_tables)
+                current_page_first_table = current_page_tables[0]
+                if pre_page_last_table:
                     # 检查现在的页面是否需要合并
                     first_merge = self.merge_cross_table(
-                        pages[idx], tables, pre_table, last_table, current_table, **kwargs
+                        pages[idx], tables, pre_page_last_table, last_in_table, current_page_first_table, **kwargs
                     )
                     is_first_tab_merge.append(first_merge)
                 else:
                     is_first_tab_merge.append(False)
 
-                pre_table = cur_page_tables[-1]
+                pre_page_last_table = current_page_tables[-1]
             part2_time = time.perf_counter() - start_time  # 结束计时并计算耗时
             print(f"{file_name} - Part 2 处理提取的表格并且合并耗时: {part2_time:.2f} seconds")
             
@@ -268,9 +268,9 @@ class PDFHandler(object):
                 futures = {
                     executor.submit(
                         self.set_title_for_table, kwargs, pages[idx], pages,
-                        page_tb_list_list, idx, is_first_tab_merge[idx], cur_page_tables
+                        page_tb_list_list, idx, is_first_tab_merge[idx], current_page_tables
                     ): idx
-                    for idx, cur_page_tables in enumerate(page_tb_list_list) if cur_page_tables
+                    for idx, current_page_tables in enumerate(page_tb_list_list) if current_page_tables
                 }
 
                 # 等待所有线程完成
@@ -299,9 +299,9 @@ class PDFHandler(object):
             top_threshold = page_height - kwargs.get('top_threshold', 90)
             if t[0]._bbox[3] >= top_threshold and idx > 0: # 表格的顶部大于阈值
                         # 判断上一页有没有表格，如果有那么获取它的页面底部y坐标否则0
-                pre_table_bottom_y = page_tb_list_list[idx-1][-1]._bbox[1] if len(page_tb_list_list[idx-1]) > 0 else 0
+                pre_page_last_table_bottom_y = page_tb_list_list[idx-1][-1]._bbox[1] if len(page_tb_list_list[idx-1]) > 0 else 0
                         # 当前表格顶部归零，即从上一页底部网上找，找到距离最近的标题，但是不超过上一页最后一个表的底部y坐标 10回调值
-                t[0].candidate_title = self.find_table_title(0, pages[idx-1],pre_table_bottom_y,kwargs)
+                t[0].candidate_title = self.find_table_title(0, pages[idx-1],pre_page_last_table_bottom_y,kwargs)
             else:
                         # 在当表格y坐标网上找，找到距离最近的标题 当前表格顶部y t[0]._bbox[3] 找到空白部分之下 10是回调值
                 t[0].candidate_title = self.find_table_title(t[0]._bbox[3], p,page_height,kwargs)
@@ -309,9 +309,9 @@ class PDFHandler(object):
         if len(t) > 1:
                     # 当前也页面之后的每个表的标题，在上个表格底部之下的区域寻找
             for i in range(1, len(t)):
-                pre_table_bottom_y = t[i-1]._bbox[1]
+                pre_page_last_table_bottom_y = t[i-1]._bbox[1]
                         # 当前表格顶部坐标 t[i]._bbox[3]之上，上个表格底部坐标之下
-                t[i].candidate_title = self.find_table_title(t[i]._bbox[3], p,pre_table_bottom_y,kwargs)
+                t[i].candidate_title = self.find_table_title(t[i]._bbox[3], p,pre_page_last_table_bottom_y,kwargs)
 
     def _generate_layout(self, filename):
         layout, dimensions = get_page_layout(filename)
@@ -320,14 +320,14 @@ class PDFHandler(object):
         return horizontal_text, vertical_text
 
     
-    def find_table_title(self, self_table_top_y, page, pre_table_bottom_y,kwargs):
+    def find_table_title(self, self_table_top_y, page, pre_page_last_table_bottom_y,kwargs):
         number_of_hearder_rows = int(kwargs.get("number_of_hearder_rows", 5))
         # print("number_of_hearder_rows",number_of_hearder_rows)
         h_txt,v_txt = self._generate_layout(page)
         
         distance_list = []
         for obj in h_txt:
-            if pre_table_bottom_y > obj.bbox[1] > self_table_top_y and obj.get_text().strip() != "":
+            if pre_page_last_table_bottom_y > obj.bbox[1] > self_table_top_y and obj.get_text().strip() != "":
                 distance = abs(obj.bbox[1] - self_table_top_y)
                 distance_list.append((obj, distance))
                 
@@ -338,13 +338,13 @@ class PDFHandler(object):
         title = " ".join(title_arr)
         return title
         
-    def merge_cross_table(self,p, tables, pre_table, last_table, current_table, **kwargs):
-        need_merge = self.check_need_merge(p, pre_table, current_table, **kwargs)
+    def merge_cross_table(self,p, tables, pre_page_last_table, last_in_table, current_page_first_table, **kwargs):
+        need_merge = self.check_need_merge(p, pre_page_last_table, current_page_first_table, **kwargs)
         if need_merge == True: # 合并表格
-            tables.remove(current_table)
+            tables.remove(current_page_first_table)
             for i in range(len(tables)):
-                if tables[i] == last_table:
-                    tables[i].df = pd.concat([last_table.df, current_table.df])
+                if tables[i] == last_in_table:
+                    tables[i].df = pd.concat([last_in_table.df, current_page_first_table.df])
                     break
             return True
         else:
